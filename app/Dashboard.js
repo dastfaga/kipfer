@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
-import { HERO, LOGO, TRAILER } from "../lib/brand";
+import { FAGA_LOGO, HERO, LOGO, TRAILER } from "../lib/brand";
 
 Chart.defaults.font.family = "Inter, system-ui, sans-serif";
 Chart.defaults.color = "#5b6780";
@@ -613,8 +613,15 @@ export default function Dashboard() {
   return (
     <div className="app">
       <header className="topbar">
-        <img src={LOGO} alt="Kipfer-Logistik" className="topbar-logo" />
+        <div className="topbar-autor">
+          <img src={FAGA_LOGO} alt="fagà Klima" className="faga-logo" />
+          <div>
+            <strong>Damir Stojadinovic</strong>
+            <span>fagà Klima GmbH</span>
+          </div>
+        </div>
         <div className="topbar-title">Energie-Simulator · Lüftung Kühllager mit PV</div>
+        <img src={LOGO} alt="Kipfer-Logistik" className="topbar-logo" />
         <button
           className="link"
           onClick={async () => {
