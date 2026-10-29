@@ -35,8 +35,8 @@ const BASIS = { lw: 5, eer: 3, cop: 3, pumpe: 3, pv: true, aus: [] };
 const PRESETS = [
   { name: "Planung", sub: "5-fach · EER 3 · COP 3", p: BASIS },
   { name: "Weniger Luft", sub: "3-fach Luftwechsel", p: { ...BASIS, lw: 3 } },
-  { name: "Effizient", sub: "EER 4.5 · COP 4", p: { ...BASIS, eer: 4.5, cop: 4, pumpe: 2.5 } },
-  { name: "Konservativ", sub: "EER 2.5 · COP 2.5", p: { ...BASIS, eer: 2.5, cop: 2.5, pumpe: 4 } },
+  { name: "Effizient", sub: "EER 4.5 · COP 4", p: { ...BASIS, eer: 4.5, cop: 4 } },
+  { name: "Konservativ", sub: "EER 2.5 · COP 2.5", p: { ...BASIS, eer: 2.5, cop: 2.5 } },
 ];
 
 const nf0 = new Intl.NumberFormat("de-CH", { maximumFractionDigits: 0 });
@@ -281,13 +281,14 @@ function useReveal(active, key) {
   }, [active, key]);
 }
 
-// ---------- Heatmap: jede Stunde eines Jahres als Pixel ----------
+// ---------- Kalender: jeder Tag ein Kästchen ----------
 const SKALEN = {
-  tot: { label: "Strombedarf", unit: "kW", stops: ["#f4f6f9", "#a6bdc0", "#4f86c6", "#263960"] },
-  pv: { label: "PV-Produktion", unit: "kW", stops: ["#f4f6f9", "#f8e08e", "#f2b531", "#c2710c"] },
-  netz: { label: "Netzbezug", unit: "kW", stops: ["#f4f6f9", "#a6bdc0", "#4f86c6", "#263960"] },
-  t: { label: "Aussentemperatur", unit: "°C", stops: ["#3b6fb6", "#9cc3e6", "#f7f7f7", "#f1a46b", "#d0453b"], min: -10, max: 35 },
+  netz: { label: "Netzbezug", unit: "kWh", stops: ["#eef2f6", "#a6bdc0", "#4f86c6", "#263960"] },
+  tot: { label: "Strombedarf", unit: "kWh", stops: ["#eef2f6", "#a6bdc0", "#4f86c6", "#263960"] },
+  pv: { label: "PV-Produktion", unit: "kWh", stops: ["#eef2f6", "#f8e08e", "#f2b531", "#c2710c"] },
+  t: { label: "Aussentemperatur", unit: "°C", stops: ["#3b6fb6", "#9cc3e6", "#f4f4f4", "#f1a46b", "#d0453b"], min: -8, max: 28 },
 };
+const WOCHENTAGE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 function colorAt(stops, k) {
   const x = Math.max(0, Math.min(1, k)) * (stops.length - 1);
@@ -297,113 +298,108 @@ function colorAt(stops, k) {
   const f = x - i;
   return a.map((v, j) => Math.round(v + (b[j] - v) * f));
 }
+const Z = 12; // Kästchen
+const G = 3; // Abstand
+const wochentag = (y, k) => (new Date(Date.UTC(y, 0, 1 + k)).getUTCDay() + 6) % 7; // Mo = 0
 
-function Heatmap({ data, params }) {
-  const jahre = data.jahre;
-  const [jahr, setJahr] = useState(jahre[jahre.length - 1]);
+function Kalender({ data, params }) {
   const [metrik, setMetrik] = useState("netz");
   const [hover, setHover] = useState(null);
-  const canvas = useRef(null);
-  const tage = jahr % 4 === 0 ? 366 : 365;
 
-  const grid = useMemo(() => {
-    const d = data.stunden[jahr];
-    const vals = new Float32Array(tage * 24).fill(NaN);
+  // Tageswerte pro Jahr
+  const tage = useMemo(() => {
     const f = faktoren(params);
-    let max = 0;
-    for (let i = 0; i < d.monat.length; i++) {
-      if (d.tag[i] < 0 || d.tag[i] >= tage) continue;
-      const s = stunde(d, i, params, f);
-      const v = metrik === "tot" ? s.tot : metrik === "pv" ? s.pv : metrik === "netz" ? Math.max(0, s.tot - s.pv) : d.t[i];
-      vals[d.tag[i] * 24 + d.std[i]] = v;
-      if (v > max) max = v;
-    }
-    return { vals, max };
-  }, [data, jahr, metrik, params, tage]);
-
-  useEffect(() => {
-    const cv = canvas.current;
-    cv.width = tage;
-    cv.height = 24;
-    const ctx = cv.getContext("2d");
-    const img = ctx.createImageData(tage, 24);
-    const sk = SKALEN[metrik];
-    const min = sk.min ?? 0;
-    const max = sk.max ?? grid.max;
-    for (let day = 0; day < tage; day++) {
-      for (let h = 0; h < 24; h++) {
-        const v = grid.vals[day * 24 + h];
-        const p = (h * tage + day) * 4;
-        const [r, g, b] = Number.isNaN(v) ? [255, 255, 255] : colorAt(sk.stops, (v - min) / (max - min || 1));
-        img.data[p] = r;
-        img.data[p + 1] = g;
-        img.data[p + 2] = b;
-        img.data[p + 3] = 255;
+    const out = {};
+    for (const y of data.jahre) {
+      const d = data.stunden[y];
+      const n = y % 4 === 0 ? 366 : 365;
+      const w = { tot: new Float64Array(n), pv: new Float64Array(n), netz: new Float64Array(n), t: new Float64Array(n), h: new Uint16Array(n) };
+      for (let i = 0; i < d.monat.length; i++) {
+        const k = d.tag[i];
+        if (k < 0 || k >= n) continue;
+        const s = stunde(d, i, params, f);
+        w.tot[k] += s.tot;
+        w.pv[k] += s.pv;
+        w.netz[k] += Math.max(0, s.tot - s.pv);
+        w.t[k] += d.t[i];
+        w.h[k]++;
       }
+      for (let k = 0; k < n; k++) w.t[k] = w.h[k] ? w.t[k] / w.h[k] : 0;
+      out[y] = w;
     }
-    ctx.putImageData(img, 0, 0);
-  }, [grid, metrik, tage]);
-
-  function onMove(e) {
-    const r = e.currentTarget.getBoundingClientRect();
-    const day = Math.floor(((e.clientX - r.left) / r.width) * tage);
-    const h = Math.floor(((e.clientY - r.top) / r.height) * 24);
-    const v = grid.vals[day * 24 + h];
-    if (day < 0 || day >= tage || h < 0 || h > 23 || Number.isNaN(v)) return setHover(null);
-    const date = new Date(Date.UTC(jahr, 0, 1 + day));
-    setHover({
-      x: e.clientX - r.left,
-      y: e.clientY - r.top,
-      text: `${date.getUTCDate()}. ${MONATE[date.getUTCMonth()]} ${jahr}, ${h}–${h + 1} Uhr: ${nf1.format(v)} ${SKALEN[metrik].unit}`,
-    });
-  }
+    return out;
+  }, [data, params]);
 
   const sk = SKALEN[metrik];
+  const min = sk.min ?? 0;
+  const max = useMemo(() => {
+    if (sk.max != null) return sk.max;
+    let m = 0;
+    for (const y of data.jahre) for (const v of tage[y][metrik]) if (v > m) m = v;
+    return m;
+  }, [tage, metrik, data, sk]);
+  const fmt = (v) => (metrik === "t" ? nf1.format(v) : nf0.format(v)) + " " + sk.unit;
+  const breite = 54 * (Z + G);
+  const refJahr = data.jahre[data.jahre.length - 1];
+  const start0 = wochentag(refJahr, 0);
+
+  function onOver(e) {
+    const k = e.target.dataset?.k;
+    if (k == null) return;
+    const y = Number(e.target.dataset.y);
+    const date = new Date(Date.UTC(y, 0, 1 + Number(k)));
+    setHover(`${WOCHENTAGE[wochentag(y, Number(k))]}, ${date.getUTCDate()}. ${MONATE[date.getUTCMonth()]} ${y}: ${fmt(tage[y][metrik][k])}`);
+  }
+
   return (
-    <div className="heatmap">
-      <div className="heatmap-controls">
-        <div className="seg">
-          {Object.entries(SKALEN).map(([k, s]) => (
-            <button key={k} className={k === metrik ? "on" : ""} onClick={() => setMetrik(k)}>
-              {s.label}
-            </button>
-          ))}
-        </div>
-        <div className="seg">
-          {jahre.map((y) => (
-            <button key={y} className={y === jahr ? "on" : ""} onClick={() => setJahr(y)}>
-              {y}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="heatmap-body">
-        <div className="heatmap-hours">
-          {[0, 6, 12, 18, 24].map((h) => (
-            <span key={h}>{h}h</span>
-          ))}
-        </div>
-        <div className="heatmap-canvas" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
-          <canvas ref={canvas} />
-          {hover && (
-            <div className="heatmap-tip" style={{ left: hover.x, top: hover.y }}>
-              {hover.text}
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="heatmap-months">
-        {MONATE.map((m) => (
-          <span key={m}>{m}</span>
+    <div className="kalender">
+      <div className="seg">
+        {Object.entries(SKALEN).map(([k, s]) => (
+          <button key={k} className={k === metrik ? "on" : ""} onClick={() => setMetrik(k)}>
+            {s.label}
+          </button>
         ))}
       </div>
-      <div className="heatmap-legend">
-        <span>
-          {nf0.format(sk.min ?? 0)} {sk.unit}
-        </span>
-        <i style={{ background: `linear-gradient(90deg, ${sk.stops.join(",")})` }} />
-        <span>
-          {nf0.format(sk.max ?? grid.max)} {sk.unit}
+      <div className="kalender-monate" style={{ marginLeft: 48 }}>
+        {MONATE.map((m, i) => {
+          const k = Math.round((Date.UTC(refJahr, i, 1) - Date.UTC(refJahr, 0, 1)) / 86400000);
+          return (
+            <span key={m} style={{ left: `${(Math.floor((k + start0) / 7) * (Z + G) * 100) / breite}%` }}>
+              {m}
+            </span>
+          );
+        })}
+      </div>
+      <div className="kalender-jahre" onMouseOver={onOver} onMouseLeave={() => setHover(null)}>
+        {data.jahre.map((y) => {
+          const w = tage[y];
+          const start = wochentag(y, 0);
+          return (
+            <div key={y} className="kalender-jahr">
+              <strong>{y}</strong>
+              <svg viewBox={`0 0 ${breite} ${7 * (Z + G)}`}>
+                {Array.from(w.h, (h, k) => {
+                  if (!h) return null;
+                  const pos = k + start;
+                  const [r, g, b] = colorAt(sk.stops, (w[metrik][k] - min) / (max - min || 1));
+                  return (
+                    <rect
+                      key={k} data-k={k} data-y={y} x={Math.floor(pos / 7) * (Z + G)} y={(pos % 7) * (Z + G)}
+                      width={Z} height={Z} rx={3} fill={`rgb(${r},${g},${b})`}
+                    />
+                  );
+                })}
+              </svg>
+            </div>
+          );
+        })}
+      </div>
+      <div className="kalender-fuss">
+        <span className="kalender-info">{hover || "Fahren Sie mit der Maus über einen Tag."}</span>
+        <span className="heatmap-legend">
+          <span>{fmt(min)}</span>
+          <i style={{ background: `linear-gradient(90deg, ${sk.stops.join(",")})` }} />
+          <span>{fmt(max)}</span>
         </span>
       </div>
     </div>
@@ -690,10 +686,6 @@ export default function Dashboard() {
             label="COP Wärmeerzeugung" unit="" value={params.cop} basis={BASIS.cop} min={2} max={6} step={0.5} onChange={set("cop")}
             info="Effizienz der Wärmepumpe für die Erhitzer. Wärmebedarf ist dank Wärmerückgewinnung klein."
           />
-          <Regler
-            label="Pumpenstrom" unit=" %" value={params.pumpe} basis={BASIS.pumpe} min={1} max={8} step={0.5} onChange={set("pumpe")}
-            info="Strom der Pumpen in Prozent der transportierten Kälte und Wärme."
-          />
           <div className={`impact ${istBasis ? "" : dJahr > 0 ? "worse" : "better"}`}>
             <span>Gegenüber Planung</span>
             {istBasis ? (
@@ -827,11 +819,9 @@ export default function Dashboard() {
           </div>
 
           <section className="card reveal">
-            <h2>Jede Stunde eines Jahres</h2>
-            <p className="card-sub">
-              Jeder Pixel ist eine Stunde: links Januar, rechts Dezember, oben Mitternacht. Fahren Sie mit der Maus darüber.
-            </p>
-            <Heatmap data={data} params={params} />
+            <h2>Jeder Tag von 2021 bis 2025</h2>
+            <p className="card-sub">Jedes Kästchen ist ein Tag. Ändern Sie links die Einstellungen und sehen Sie, wie sich die Farben verschieben.</p>
+            <Kalender data={data} params={params} />
           </section>
 
           <section className="card notes reveal">
@@ -840,7 +830,7 @@ export default function Dashboard() {
               <li>Wetter: Stundenwerte MeteoSchweiz Basel-Binningen, ca. 10 km vom Standort, {zeitraum}.</li>
               <li>Luftwechsel: Ventilator-, Kälte- und Wärmeenergie proportional zur Luftmenge. Planung 5-fach = 127&apos;173 m³/h, 24/7.</li>
               <li>PV: 617.5 kWp, Ost/West 10°, Wechselrichter 500 kVA, simuliert mit pvlib. Keine Verschattung durch Dachaufbauten gerechnet.</li>
-              <li>Nur Lüftung: Ventilatoren, Erhitzer, Gerätekühler, Pumpen und Lüftungsanteil der Umluftkühler. Keine Raumlasten.</li>
+              <li>Nur Lüftung: Ventilatoren, Erhitzer, Gerätekühler, Pumpen und Lüftungsanteil der Umluftkühler. Pumpenstrom fix 3 % der Kälte- und Wärmeenergie. Keine Raumlasten.</li>
               <li>Tarif: EBL Grundversorgung M-DLB des jeweiligen Jahres, Leistungsspitze als Stundenmittel im Hochtarif. Exkl. MWST.</li>
               <li>Eigenverbrauch als Stundenbilanz ohne Speicher. Grobschätzung für den Variantenvergleich, keine Garantie.</li>
             </ul>
