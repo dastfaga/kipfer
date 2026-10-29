@@ -224,6 +224,16 @@ tr.avg th, tr.avg td { font-weight: 700; color: var(--navy); background: var(--t
   .reveal { opacity: 1; transform: none; transition: none; }
 }
 
+/* Kopfzeile: links Autor, rechts Kunde */
+.topbar-autor { display: flex; align-items: center; gap: 10px; }
+.faga-logo { height: 36px; width: auto; border-radius: 8px; display: block; }
+.topbar-autor strong { display: block; font-size: 14px; color: var(--navy); line-height: 1.2; }
+.topbar-autor span { display: block; font-size: 11px; color: var(--muted); }
+.topbar .topbar-title { text-align: center; }
+@media (max-width: 640px) {
+  .topbar-autor div { display: none; }
+}
+
 /* Kalender */
 .kalender { display: grid; gap: 10px; }
 .kalender-monate { position: relative; height: 16px; font-size: 11px; color: var(--muted); }
